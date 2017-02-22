@@ -49,7 +49,7 @@ Tuple在传输过程中需要序列化和反序列化，Storm集成了普通类�
 
 
 
-![Storm逻辑结构](/Users/harry/projects/jd/workshop-for-storm/docs/img/Storm逻辑结构.jpg)
+![Storm逻辑结构](./img/Storm逻辑结构.jpg)
 
 
 
