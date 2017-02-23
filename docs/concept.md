@@ -93,7 +93,7 @@ Spout是Storm里面特有的名词，Stream的源头。其是在一个Topology�
 
 
 
- ![基本结构](img\基本结构.png)
+ ![基本结构](./img/基本结构.png)
 
 
 
@@ -111,5 +111,5 @@ Spout是Storm里面特有的名词，Stream的源头。其是在一个Topology�
 
 
 
- ![运行逻辑](img\运行逻辑.jpg)
+ ![运行逻辑](./img/运行逻辑.jpg)
 
