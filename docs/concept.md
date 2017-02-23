@@ -1,3 +1,33 @@
+## Storm入门
+
+
+
+### 什么是Storm
+
+- 如果只用一句话来描述 [storm](http://storm.apache.org/) 是什么的话：**分布式** && **实时** 计算系统。按照作者 [Nathan Marz](http://nathanmarz.com/) 的说法，storm对于实时计算的意义类似于hadoop对于批处理的意义。
+- Hadoop（大数据分析领域无可争辩的王者）专注于批处理｡这种模型对许多情形（比如为网页建立索引）已经足够,但还存在其他一些使用模型,它们需要来自高度动态的来源的实时信息｡为了解决这个问题,就得借助 Nathan Marz 推出的 storm（现在已经被Apache孵化）storm 不处理静态数据,但它处理连续的流数据。
+
+
+
+### Storm与传统大数据
+
+- storm 与其他大数据解决方案的不同之处在于它的处理方式。Hadoop 在本质上是一个批处理系统｡数据被引入 Hadoop 文件系统 (HDFS) 并分发到各个节点进行处理｡当处理完成时,结果数据返回到 HDFS 供始发者使用。storm 支持创建拓扑结构来转换没有终点的数据流。不同于 Hadoop 作业,这些转换从不停止,它们会持续处理到达的数据。
+- Hadoop 的核心是使用 Java™ 语言编写的,但支持使用各种语言编写的数据分析应用程序。而 Twitter Storm 是使用 Clojure语言实现的。
+- Clojure 是一种基于虚拟机 (VM) 的语言,在 Java 虚拟机上运行。但是,尽管 storm 是使用 Clojure 语言开发的,您仍然可以在 storm 中使用几乎任何语言编写应用程序｡所需的只是一个连接到 storm 的架构的适配器。已存在针对 Scala，JRuby，Perl 和 PHP 的适配器,但是还有支持流式传输到 Storm 拓扑结构中的结构化查询语言适配器。
+
+
+
+### Storm优点
+
+- 简单编程
+- 多语言支持
+- 支持水平扩展
+- 容错性强
+- 可靠的消息保证
+- 本地模式
+
+
+
 ## 核心概念
 
 
@@ -67,7 +97,7 @@ Spout是Storm里面特有的名词，Stream的源头。其是在一个Topology�
 - **Global grouping**：一个Task
 - **None grouping**：不关心Task在Stream中如何做分发，目前等同于Shuffle grouping
 - **Direct grouping**：产生数据的Spout/Bolt自己明确决定这个Tuple被Bolt的那些Task所消费
-- **Local or shuffle grouping**：如果目标Bolt中的一个或者多个Task和当前产生数据的Task在同一个Worker进程里面，那么就走内部的线程间通信，将Tuple直接发给在当前Woker进程的目的Task。否则，同Shuffle	grouping
+  - **Local or shuffle grouping**：如果目标Bolt中的一个或者多个Task和当前产生数据的Task在同一个Worker进程里面，那么就走内部的线程间通信，将Tuple直接发给在当前Woker进程的目的Task。否则，同Shufflegrouping
 
 
 
