@@ -1,4 +1,4 @@
-## 基本概念
+## 核心概念
 
 
 
@@ -7,9 +7,8 @@
 - Spout
 - Bolt
 - Stream grouping
-- Reliability
-- Task
-- Worker
+
+
 
 
 
@@ -45,6 +44,31 @@ Tuple在传输过程中需要序列化和反序列化，Storm集成了普通类�
 
 
 
+### Spout
+
+Spout是Storm里面特有的名词，Stream的源头。其是在一个Topology中产生源数据流的组件。通常情况下Spout会从外部数据源中读取数据，然后转换到Topology内部的源数据。Spout是一个主动的角色，其内部有一个nextTuple()函数, Storm框架会不停地调用此函数，用户只要在其中生成源数据即可。
+
+
+
+### Bolt
+
+在一个topology中接受数据然后执行处理的组件。Bolt可以执行过滤、函数操作、合并、写数据库等任何操作。Bolt是一个被 动的角色，其接口中有个execute(Tuple input)函数,在接受到消息后会调用此函数，用户可以在其中执行自己想要的操作。
+
+
+
+### Stream grouping
+
+路由策略，一个tuple发往下游某个bolt n个并发中的哪个
+
+- **Shuffle grouping**	，随机选择
+- **Fields grouping**，按字段Hash
+- **Partial Key grouping**：字段部分Hash
+- **All grouping**：全部
+- **Global grouping**：一个Task
+- **None grouping**：不关心Task在Stream中如何做分发，目前等同于Shuffle grouping
+- **Direct grouping**：产生数据的Spout/Bolt自己明确决定这个Tuple被Bolt的那些Task所消费
+- **Local or shuffle grouping**：如果目标Bolt中的一个或者多个Task和当前产生数据的Task在同一个Worker进程里面，那么就走内部的线程间通信，将Tuple直接发给在当前Woker进程的目的Task。否则，同Shuffle	grouping
+
 
 
 
@@ -55,5 +79,37 @@ Tuple在传输过程中需要序列化和反序列化，Storm集成了普通类�
 
 
 
+## Storm基本结构
 
+
+
+| 概念         | 解释                                       |
+| :--------- | :--------------------------------------- |
+| Nimbus     | 负责资源分配和任务调度                              |
+| Supervisor | 负责接收Nimbus分配的任务，启动和停止属于自己管理的Worker进程     |
+| Worker     | 运行具体处理组件逻辑的进程                            |
+| Executor   | 运行Spout或Bolt处理逻辑的线程                      |
+| Task       | Storm中最小处理单元，一个Executor中可以包含一个或多个Task，消息的分发都是从一个Task到另一个Task进行的 |
+
+
+
+ ![基本结构](img\基本结构.png)
+
+
+
+
+
+
+
+### Topology提交及任务运行流程
+
+1. 非本地模式下，客户端通过thrift调用nimbus接口，来上传代码到nimbus并触发提交操作.
+2. nimbus进行任务分配，并将信息同步到zookeeper.
+3. supervisor定期获取任务分配信息，如果topology代码缺失，会从nimbus下载代码，并根据任务分配信息，同步worker.
+4. worker根据分配的tasks信息，启动多个executor线程，同时实例化spout、bolt、acker等组件，此时，等待所有connections（worker和其它机器通讯的网络连接）启动完毕，此storm-cluster即进入工作状态。
+5. 除非显示调用kill topology，否则spout、bolt等组件会一直运行。
+
+
+
+ ![运行逻辑](img\运行逻辑.jpg)
 
