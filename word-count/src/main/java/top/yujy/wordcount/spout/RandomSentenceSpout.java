@@ -46,4 +46,14 @@ public class RandomSentenceSpout extends BaseRichSpout {
         String sentence = sentences[rand.nextInt(sentences.length)];
         collector.emit(new Values(sentence));
     }
+
+    @Override
+    public void ack(Object msgId) {
+        System.out.println("ack: " + msgId);
+    }
+
+    @Override
+    public void fail(Object msgId) {
+        System.out.println("fail: " + msgId);
+    }
 }

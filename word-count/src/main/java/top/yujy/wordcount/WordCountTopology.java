@@ -58,8 +58,9 @@ public class WordCountTopology {
             Integer count = counts.get(word);
 
             if (count == null) {
-                count++;
+                count = 0;
             }
+            count++;
 
             System.out.println(String.format("%s -> %d", word, count));
 
@@ -79,10 +80,10 @@ public class WordCountTopology {
 
         TopologyBuilder builder = new TopologyBuilder();
 
-        builder.setSpout("spout", new RandomSentenceSpout(), 5);
+        builder.setSpout("spout", new RandomSentenceSpout(), 1);
 
-        builder.setBolt("split", new SplitSentenceBolt(), 8).shuffleGrouping("spout");
-        builder.setBolt("count", new CountBolt(), 12).fieldsGrouping("split", new Fields("word"));
+        builder.setBolt("split", new SplitSentenceBolt(), 2).shuffleGrouping("spout");
+        builder.setBolt("count", new CountBolt(), 1).fieldsGrouping("split", new Fields("word"));
 
         Config conf = new Config();
         conf.setDebug(true);
@@ -96,7 +97,7 @@ public class WordCountTopology {
             LocalCluster cluster = new LocalCluster();
             cluster.submitTopology("word-count", conf, builder.createTopology());
 
-            Thread.sleep(100000);
+            Thread.sleep(500000);
 
             cluster.shutdown();
         }
