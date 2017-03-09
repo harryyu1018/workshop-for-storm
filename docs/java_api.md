@@ -200,6 +200,10 @@ public interface IBasicBolt extends IComponent {
 
 
 
+![](img/BaseBasicBolt类图.png)
+
+
+
 提供空实现的**BaseBasicBolt**， 方便使用，只用实现自己关系的接口即可
 
 ```java
@@ -224,6 +228,15 @@ public abstract class BaseComponent implements IComponent {
 ```
 
 
+
+
+
+## ISpoutOutputCollector VS IOutputCollector 
+
+
+
+- Spout通过调用ISpoutOutputCollector的emit函数进行tuple的发射，当然实际上emit函数并未完成实际的发送，它主要是根据用户提供的streamId，计算出该tuple需要发送到的目标taskID。emitDirect函数。更加直白一点的解释是: 直接指定目标taskID。它们都只是将<tasked,tuple>组成的序列对放到一个队列中，然后会有另一个线程负责将tuple从队列中取出并发送到目标task。
+- IOutputCollector是会被Bolt调用的，与ISpoutOutputCollector功能类似。但是区别也很明显，首先我们可以看到它的emit系列函数，多了一个参数Collection<Tuple> anchors，增加这样一个anchors原因在于，对于spout来说，它产生的tuple就是root tuple，但是对于bolt来说，它是通过一个或多个输入tuple，进而产生输出tuple的，这样tuple之间是有一个父子关系的，anchors就是用于指定当前要emit的这个tuple的所有父亲，正是通过它，才建立起tuple树，如果用户给了一个空的anchors，那么这个要emit的tuple将不会被加入tuple树，也就不会被追踪，即使后面它丢失了，也不会被spout感知。
 
 
 
@@ -294,13 +307,30 @@ public interface Tuple extends ITuple{
 
 
 
+### Storm的运行拓扑
+
+![](img/Storm中worker进程，executor(线程)和任务的关系.png)
+
+
+
+**小例子**
+
+```java
+Config conf = new Config();
+conf.setNumWorkers(2); // use two worker processes
+
+topologyBuilder.setSpout("blue-spout", new BlueSpout(), 2);
+topologyBuilder.setBolt("green-bolt", new GreenBolt(), 2).setNumTasks(4).shuffleGrouping("blue-spout");
+topologyBuilder.setBolt("yellow-bolt", new YellowBolt(), 6).shuffleGrouping("green-bolt");
+
+StormSubmitter.submitToplogy("mytopology", conf, topologyBuilder.createTopology());
+```
 
 
 
 
 
-
-
+![](img/Storm中worker进程，executor(线程)和任务的关系-例子.png)
 
 
 
