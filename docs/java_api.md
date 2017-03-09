@@ -17,7 +17,7 @@
 
 
 
-### ISpout
+## Spout分析
 
 
 
@@ -27,7 +27,11 @@
 
 ![Spout类图带方法版本](img/Spout类图2.png)
 
+<center>Spout结构</center>
 
+
+
+### ISpout.java
 
 ```java
 public interface ISpout extends Serializable {
