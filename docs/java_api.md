@@ -21,6 +21,14 @@
 
 
 
+
+
+![Spout类图](img/Spout类图1.png)
+
+![Spout类图带方法版本](img/Spout类图2.png)
+
+
+
 ```java
 public interface ISpout extends Serializable {
     /**
@@ -71,4 +79,44 @@ public interface ISpout extends Serializable {
 ```
 
 
+
+**IComponent**
+
+```java
+public interface IComponent extends Serializable {
+
+    /**
+     * 定义输出的字段.
+     */
+    void declareOutputFields(OutputFieldsDeclarer declarer);
+
+    /**
+     * 返回对应Component特有的Config.
+     */
+    Map<String, Object> getComponentConfiguration();
+
+}
+```
+
+
+
+
+
+**ISpoutOutputCollector**
+
+```java
+public interface ISpoutOutputCollector extends IErrorReporter{
+    /**
+     * 返回收到这些Tuple的taskId.
+     */
+    List<Integer> emit(String streamId, List<Object> tuple, Object messageId);
+    void emitDirect(int taskId, String streamId, List<Object> tuple, Object messageId);
+    long getPendingCount();
+    
+   /**
+    * 用于汇报Spout中的错误. 这个是从IErrorReporter继承得到的方法.
+    */
+    void reportError(Throwable error);
+}
+```
 
