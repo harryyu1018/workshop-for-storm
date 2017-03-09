@@ -14,6 +14,9 @@
   - 实现对应接口的基类（具体实现为空）
   - BaseRichSpout
   - BaseRichBolt
+- Tuple
+
+
 
 
 
@@ -243,6 +246,10 @@ public interface ITuple {
   public List<Object> getValues();
 }
 ```
+
+
+
+![ITuple](img/ITuple方法.png)
 
 
 
