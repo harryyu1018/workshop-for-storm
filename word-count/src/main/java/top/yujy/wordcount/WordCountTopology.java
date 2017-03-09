@@ -5,6 +5,7 @@ import org.apache.storm.LocalCluster;
 import org.apache.storm.StormSubmitter;
 import org.apache.storm.generated.ShellComponent;
 import org.apache.storm.task.ShellBolt;
+import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.BasicOutputCollector;
 import org.apache.storm.topology.IRichBolt;
 import org.apache.storm.topology.OutputFieldsDeclarer;
@@ -26,7 +27,17 @@ public class WordCountTopology {
     public static class SplitSentenceBolt extends BaseBasicBolt {
 
         @Override
+        public void prepare(Map stormConf, TopologyContext context) {
+            super.prepare(stormConf, context);
+        }
+
+        @Override
         public void execute(Tuple input, BasicOutputCollector collector) {
+
+            String str =
+                    input.getSourceTask() + ", " +
+                    input.getSourceComponent() + ", " +
+                    input.getMessageId().toString();
 
             String sentence = input.getString(0);
             String[] words = sentence.split(" ");
@@ -50,6 +61,11 @@ public class WordCountTopology {
     public static class CountBolt extends BaseBasicBolt {
 
         Map<String, Integer> counts = new HashMap<>();
+
+        @Override
+        public void prepare(Map stormConf, TopologyContext context) {
+            super.prepare(stormConf, context);
+        }
 
         @Override
         public void execute(Tuple tuple, BasicOutputCollector collector) {

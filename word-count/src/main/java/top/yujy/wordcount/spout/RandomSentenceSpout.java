@@ -1,5 +1,6 @@
 package top.yujy.wordcount.spout;
 
+import org.apache.log4j.Logger;
 import org.apache.storm.spout.SpoutOutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.OutputFieldsDeclarer;
@@ -15,6 +16,8 @@ import java.util.Random;
  * Created by harry on 2017/2/21.
  */
 public class RandomSentenceSpout extends BaseRichSpout {
+
+    private static Logger LOG = Logger.getLogger(RandomSentenceSpout.class);
 
     SpoutOutputCollector collector;
     Random rand;
@@ -49,11 +52,11 @@ public class RandomSentenceSpout extends BaseRichSpout {
 
     @Override
     public void ack(Object msgId) {
-        System.out.println("ack: " + msgId);
+        LOG.info("Ack: " + msgId);
     }
 
     @Override
     public void fail(Object msgId) {
-        System.out.println("fail: " + msgId);
+        LOG.info("Fail: " + msgId);
     }
 }

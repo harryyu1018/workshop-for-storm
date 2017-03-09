@@ -114,6 +114,7 @@ public interface ISpoutOutputCollector extends IErrorReporter{
      * 返回收到这些Tuple的taskId.
      */
     List<Integer> emit(String streamId, List<Object> tuple, Object messageId);
+  
     void emitDirect(int taskId, String streamId, List<Object> tuple, Object messageId);
     long getPendingCount();
     
@@ -123,4 +124,182 @@ public interface ISpoutOutputCollector extends IErrorReporter{
     void reportError(Throwable error);
 }
 ```
+
+
+
+## Bolt分析
+
+
+
+![Bolt类图](img/Bolt类图结构1.png)
+
+
+
+![Bolt类图](img/Bolt类图结构2.png)
+
+<center>Spout结构</center>
+
+
+
+### IBolt
+
+
+
+```java
+public interface IBolt extends Serializable {
+    /**
+     * 初始化回调函数.
+     * 
+     * @param stormConf 提供Storm集群的相关信息.
+     * @param context 可以获取当前对象在topology中的task的位置, 包括：task id & component id, 输入&输出信息等.
+     * @param collector 用于emit tuple. tuple可以在任意时刻被emit, prepare&cleanup都是可以的.
+     */
+    void prepare(Map stormConf, TopologyContext context, OutputCollector collector);
+
+    /**
+     * 处理函数. Tuple包含了元数据(来自于哪个component, stream, 和task).
+     * IBolt不需要立刻处理tuple, 它可以保留tuple, 然后在之后处理(针对aggregation或者join的场景)
+     *
+     * 使用prepare中的collector emit tuple. 需要注意的是, 所有的tuple必须被ack或者fail, 否则的话, storm没法告知产生tuple的spout是否执行成功.
+     *
+     * 注意：大部分场景都是在execute方法的底部进行ack. IBasicBolt会自动ack.
+     * see IBasicBolt which automates this.
+     */
+    void execute(Tuple input);
+
+    /**
+     * 销毁Bolt时的回调函数(销毁时不能保证一定被调用).
+     */
+    void cleanup();
+}
+```
+
+
+
+### IBasicBolt
+
+- 针对常用场景简化的bolt接口
+- 什么场景: emit一个新tuple, ack输入tuple
+- 简单什么: 1. 不用保存collector, 2. 不用显示调用ack
+
+```java
+public interface IBasicBolt extends IComponent {
+    void prepare(Map stormConf, TopologyContext context);
+    /**
+     * Process the input tuple and optionally emit new tuples based on the input tuple.
+     * 
+     * All acking is managed for you. Throw a FailedException if you want to fail the tuple.
+     */
+    void execute(Tuple input, BasicOutputCollector collector);
+    void cleanup();
+}
+```
+
+
+
+提供空实现的**BaseBasicBolt**， 方便使用，只用实现自己关系的接口即可
+
+```java
+public abstract class BaseBasicBolt extends BaseComponent implements IBasicBolt {
+
+    @Override
+    public void prepare(Map stormConf, TopologyContext context) {
+    }
+
+    @Override
+    public void cleanup() {
+    }    
+}
+
+
+public abstract class BaseComponent implements IComponent {
+    @Override
+    public Map<String, Object> getComponentConfiguration() {
+        return null;
+    }    
+}
+```
+
+
+
+
+
+### Tuple分析
+
+获取Tuple对应值的方法
+
+```java
+public interface ITuple {
+  
+  // 根据下标获取字段值
+  public Object getValue(int i);
+  public String getString(int i);
+  
+  // 根据名称获取字段值
+  public Object getValueByField(String field);
+  public String getStringByField(String field);
+  
+  // 获取所有字段值列表
+  public List<Object> getValues();
+}
+```
+
+
+
+```java
+public interface Tuple extends ITuple{
+
+    /**
+     * Returns the global stream id (component + stream) of this tuple.
+     * 
+     * @deprecated replaced by {@link #getSourceGlobalStreamId()} due to broken naming convention
+     */
+    @Deprecated
+    public GlobalStreamId getSourceGlobalStreamid();
+    
+    /**
+     * Returns the global stream id (component + stream) of this tuple.
+     */
+    public GlobalStreamId getSourceGlobalStreamId();
+
+    /**
+     * Gets the id of the component that created this tuple.
+     */
+    public String getSourceComponent();
+    
+    /**
+     * Gets the id of the task that created this tuple.
+     */
+    public int getSourceTask();
+    
+    /**
+     * Gets the id of the stream that this tuple was emitted to.
+     */
+    public String getSourceStreamId();
+    
+    /**
+     * Gets the message id that associated with this tuple.
+     */
+    public MessageId getMessageId();
+}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
