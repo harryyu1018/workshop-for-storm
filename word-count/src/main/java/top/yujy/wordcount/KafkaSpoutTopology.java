@@ -35,7 +35,7 @@ public class KafkaSpoutTopology {
 
         builder.setSpout("kafka-spout", kafkaSpout, 2);
         builder.setBolt("seq-bolt", new SequenceBolt(), 2).shuffleGrouping("kafka-spout");
-//        builder.setBolt("kafka-bolt", kafkaBolt, 2).shuffleGrouping("seq-bolt");
+        builder.setBolt("kafka-bolt", kafkaBolt, 2).shuffleGrouping("seq-bolt");
 
         Config conf = new Config();
         conf.setDebug(true);
@@ -110,7 +110,7 @@ public class KafkaSpoutTopology {
 
             LOGGER.info("out -> " + newWord);
 
-//            collector.emit(new Values(newWord));
+            collector.emit(new Values(newWord));
         }
 
         @Override

@@ -1,5 +1,8 @@
 # Storm Kafka Integration
 
+- Storm-Kafka  小例子
+- KafkaSpout & KafkaBolt 浅析
+
 
 
 ## 一、Storm-Kafka 小例子
@@ -64,6 +67,24 @@ protected static KafkaBolt initKafkaBolt() {
 
 
 详情见代码: https://github.com/harryyu1018/workshop-for-storm/blob/master/word-count/src/main/java/top/yujy/wordcount/KafkaSpoutTopology.java
+
+
+
+**Tips:** win7下Kafka Topic创建，启动Producer，启动Consumer（详细用法请参考kafka官网手册）
+
+```shell
+# 创建topic
+kafka-topics.bat --create --zookeeper localhost:2181 --replication-factor 1 --partition 2 --topic topic-storm
+
+kafka-topics.bat --create --zookeeper localhost:2181 --replication-factor 1 --partition 1 --topic topic-storm-result
+
+# 启动producer
+kafka-console-producer.bat --broker-list localhost:9092 --topic topic-storm
+
+# 启动consumer
+kafka-console-consumer.bat --zookeeper localhost:2181 --topic topic-storm-result
+
+```
 
 
 
@@ -701,6 +722,63 @@ public void commit() {
     "port": 9092
   },
   "topic": "topic-storm"
+}
+```
+
+
+
+###  KafkaSpout消费状态维护
+
+```java
+public PartitionManager(DynamicPartitionConnections connections, String topologyInstanceId, ZkState state, Map stormConf, SpoutConfig spoutConfig, Partition id) {
+   
+  // (略) 初始化成员变量
+
+  // (略) 实例化 _failedMsgRetryManager 错误重发对象
+
+  String jsonTopologyId = null;
+  Long jsonOffset = null;
+  
+  // 获取ZK上的提交路径
+  String path = committedPath();
+  try {
+    //从提交路径上读取信息，提取记录的该partition的消费offset
+    //如果zookeeper上没有该路径则表示当前topic没有被spout消费过 
+    Map<Object, Object> json = _state.readJSON(path);
+    if (json != null) {
+      jsonTopologyId = (String) ((Map<Object, Object>) json.get("topology")).get("id");
+      jsonOffset = (Long) json.get("offset");
+    }
+  } catch (Throwable e) { /* ... */ }
+
+  // 从broker上获取当前partition的offset
+  // 执行逻辑是根据kafkaConfig中设置的 startOffsetTime = kafka.api.OffsetRequest.EarliestTime();决定的
+  String topic = _partition.topic;
+  Long currentOffset = KafkaUtils.getOffset(_consumer, topic, id.partition, spoutConfig);
+
+  // 情况1： 如果从zookeeper上没有获取topology和消费信息，则直接用从broker上获取到的offset
+  if (jsonTopologyId == null || jsonOffset == null) { // failed to parse JSON?
+    _committedTo = currentOffset;
+  } 
+  
+  // 情况2： 获取到的topology id 不一致 或者用户要求从新获取数据的时候
+  else if (!topologyInstanceId.equals(jsonTopologyId) && spoutConfig.ignoreZkOffsets) {
+    _committedTo = KafkaUtils.getOffset(_consumer, topic, id.partition, spoutConfig.startOffsetTime);
+  } 
+  
+  // 情况3： 使用zookeeper上保留的offset进行消费 
+  else {
+    _committedTo = jsonOffset;
+  }
+
+  // 如果上次消费的offset已经过了保质期，则直接消费新数据
+  if (currentOffset - _committedTo > spoutConfig.maxOffsetBehind || _committedTo <= 0) {
+    
+    Long lastCommittedOffset = _committedTo;
+    _committedTo = currentOffset;
+  }
+  
+  _emittedToOffset = _committedTo;
 }
 ```
 
