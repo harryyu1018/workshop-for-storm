@@ -17,6 +17,7 @@ import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Tuple;
 import org.apache.storm.tuple.Values;
 
+import java.util.Arrays;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -34,7 +35,7 @@ public class KafkaSpoutTopology {
 
         builder.setSpout("kafka-spout", kafkaSpout, 2);
         builder.setBolt("seq-bolt", new SequenceBolt(), 2).shuffleGrouping("kafka-spout");
-        builder.setBolt("kafka-bolt", kafkaBolt, 2).shuffleGrouping("seq-bolt");
+//        builder.setBolt("kafka-bolt", kafkaBolt, 2).shuffleGrouping("seq-bolt");
 
         Config conf = new Config();
         conf.setDebug(true);
@@ -71,6 +72,8 @@ public class KafkaSpoutTopology {
         BrokerHosts brokerHosts = new ZkHosts(BROKER_HOSTS_STR);
         SpoutConfig spoutConfig = new SpoutConfig(brokerHosts, TOPIC, ZK_ROOT, UUID.randomUUID().toString());
         spoutConfig.scheme = new SchemeAsMultiScheme(new StringScheme());
+        spoutConfig.zkServers = Arrays.asList(new String[] {"localhost"});
+        spoutConfig.zkPort = 2181;
 
         return new KafkaSpout(spoutConfig);
     }
@@ -107,7 +110,7 @@ public class KafkaSpoutTopology {
 
             LOGGER.info("out -> " + newWord);
 
-            collector.emit(new Values(newWord));
+//            collector.emit(new Values(newWord));
         }
 
         @Override
