@@ -63,7 +63,7 @@ public Fields getOutputFields();
 
 - **RawMultiScheme**:	  获取一个ByteBuffer & 返回一个byte[] (ByteBuffer转换后) tuple。输出字段outputField的名字为"bytes"。
 
-**RawMultiScheme**:	  获取一个ByteBuffer & 返回一个byte[] (ByteBuffer转换后) tuple。输出字段outputField的名字为"bytes"。
+ **RawMultiScheme**:  获取一个ByteBuffer & 返回一个byte[] (ByteBuffer转换后) tuple。输出字段outputField的名字为"bytes"。
 
 - **SchemeAsMultiScheme**
 - **KeyValueSchemeAsMultiScheme**
@@ -139,6 +139,211 @@ Topology运行中Kafka spout会记录其已经读取和发出（emit）的消息
 This means that when a topology has run once the setting `KafkaConfig.startOffsetTime` will not have an effect for subsequent runs of the topology because now the topology will rely on the consumer state information (offsets) in ZooKeeper to determine from where it should begin (more precisely: resume) reading.
 
  If you want to force the spout to ignore any consumer state information stored in ZooKeeper, then you should set the parameter `KafkaConfig.ignoreZkOffsets` to `true`. If `true`, the spout will always begin reading from the offset defined by `KafkaConfig.startOffsetTime` as described above.
+
+
+
+
+
+## KafkaSpout分析
+
+**原理**
+
+- kafka topic的partition均匀分配给spout task
+- 每个spout task负责消费1个或多个partition
+- nextTuple()从kafka取数据，emit tuple
+- ack()标记已处理的tuple，用来更新消费的offset，消费过的offset就不再重复了
+- fail()标记未处理完的tuple，用来重新从kafka取到未处理完的数据进行消费
+
+ 
+
+
+
+```java
+@Override
+    public void nextTuple() {
+        List<PartitionManager> managers = _coordinator.getMyManagedPartitions();
+        for (int i = 0; i < managers.size(); i++) {
+
+            try {
+                // in case the number of managers decreased
+                _currPartitionIndex = _currPartitionIndex % managers.size();
+                EmitState state = managers.get(_currPartitionIndex).next(_collector);
+                if (state != EmitState.EMITTED_MORE_LEFT) {
+                    _currPartitionIndex = (_currPartitionIndex + 1) % managers.size();
+                }
+                if (state != EmitState.NO_EMITTED) {
+                    break;
+                }
+            } catch (FailedFetchException e) {
+                LOG.warn("Fetch failed", e);
+                _coordinator.refresh();
+            }
+        }
+
+        long diffWithNow = System.currentTimeMillis() - _lastUpdateMs;
+
+        /*
+             As far as the System.currentTimeMillis() is dependent on System clock,
+             additional check on negative value of diffWithNow in case of external changes.
+         */
+        if (diffWithNow > _spoutConfig.stateUpdateIntervalMs || diffWithNow < 0) {
+            commit();
+        }
+    }
+```
+
+
+
+```java
+// ack
+@Override
+public void ack(Object msgId) {
+  KafkaMessageId id = (KafkaMessageId) msgId;
+  PartitionManager m = _coordinator.getManager(id.partition);
+  if (m != null) {
+    m.ack(id.offset);
+  }
+}
+
+// fail
+@Override
+public void fail(Object msgId) {
+  KafkaMessageId id = (KafkaMessageId) msgId;
+  PartitionManager m = _coordinator.getManager(id.partition);
+  if (m != null) {
+    m.fail(id.offset);
+  }
+}
+
+
+// commit
+private void commit() {
+  _lastUpdateMs = System.currentTimeMillis();
+  for (PartitionManager manager : _coordinator.getMyManagedPartitions()) {
+    manager.commit();
+  }
+}
+
+```
+
+
+
+**KafkaMessageId**
+
+```java
+static class KafkaMessageId implements Serializable {
+  
+  // org.apache.storm.kafka.Partition (注意不是Kafka里面的Partition)
+  public Partition partition;
+  public long offset;
+  
+  // here is constructor
+}
+```
+
+
+
+
+
+### PartitionManager分析
+
+**Emit的三种状态**
+
+```java
+static enum EmitState {
+  EMITTED_MORE_LEFT, EMITTED_END, NO_EMITTED
+}
+```
+
+**next()函数**
+
+```java
+public EmitState next(SpoutOutputCollector collector) {
+        if (_waitingToEmit.isEmpty()) {
+            fill();
+        }
+        while (true) {
+            MessageAndOffset toEmit = _waitingToEmit.pollFirst();
+            if (toEmit == null) {
+                return EmitState.NO_EMITTED;
+            }
+
+            Iterable<List<Object>> tups;
+            if (_spoutConfig.scheme instanceof MessageMetadataSchemeAsMultiScheme) {
+                tups = KafkaUtils.generateTuples((MessageMetadataSchemeAsMultiScheme) _spoutConfig.scheme, toEmit.message(), _partition, toEmit.offset());
+            } else {
+                tups = KafkaUtils.generateTuples(_spoutConfig, toEmit.message(), _partition.topic);
+            }
+            
+            if ((tups != null) && tups.iterator().hasNext()) {
+               if (!Strings.isNullOrEmpty(_spoutConfig.outputStreamId)) {
+                    for (List<Object> tup : tups) {
+                        collector.emit(_spoutConfig.topic, tup, new KafkaMessageId(_partition, toEmit.offset()));
+                    }
+                } else {
+                    for (List<Object> tup : tups) {
+                        collector.emit(tup, new KafkaMessageId(_partition, toEmit.offset()));
+                    }
+                }
+                break;
+            } else {
+                ack(toEmit.offset());
+            }
+        }
+        if (!_waitingToEmit.isEmpty()) {
+            return EmitState.EMITTED_MORE_LEFT;
+        } else {
+            return EmitState.EMITTED_END;
+        }
+    }
+```
+
+
+
+### KafkaSpout流程示意
+
+ 
+
+- emittedToOffset: 已经从kafka读到的最大offset
+- committedTo: 已经确认处理完的最大offset
+- pending: 已经从kafka读到，但是还没有ack的offset队列
+- waitingToEmit: 已从kafka读到，但是还没有emit出去的数据
+
+
+
+
+
+## KafkaBolt分析
+
+关键参数：
+
+- TopicSelector: 数据写到哪个topic
+- TupleToKafkaMapper: 从Storm的tuple选择哪些字段写Kafka
+- serializer class: 把选择的字段转成kafka的byte[]
+- broker list: broker列表
+
+
+
+原理：
+
+- TopicSelector决定写入哪个topic
+  - DefaultTopicSelector可以指定固定的topic
+- TupleToKafkaMapper决定写入tuple中的哪些数据
+  - FieldNameBased 
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
