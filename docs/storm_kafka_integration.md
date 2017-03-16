@@ -2,7 +2,74 @@
 
 
 
-## KafkaConfig
+## 一、Storm-Kafka 小例子
+
+
+
+初始化KafkaSpout
+
+```java
+private static final String BROKER_HOSTS_STR = "localhost:2181";
+
+private static final String TOPIC = "topic-storm";
+private static final String ZK_ROOT = "/kafkaspout-demo";
+
+private static final String TOPIC_RESULT = "topic-storm-result";
+
+/**
+ * 初始化kafkaSpout.
+ */
+protected static KafkaSpout initKafkaSpout() {
+
+
+  BrokerHosts brokerHosts = new ZkHosts(BROKER_HOSTS_STR);
+  SpoutConfig spoutConfig = new SpoutConfig(brokerHosts, TOPIC, ZK_ROOT, UUID.randomUUID().toString());
+  spoutConfig.scheme = new SchemeAsMultiScheme(new StringScheme());
+  
+  // 一定要设置, 尤其是LocalCluster模式下
+  spoutConfig.zkServers = Arrays.asList(new String[] {"localhost"});
+  spoutConfig.zkPort = 2181;
+
+  return new KafkaSpout(spoutConfig);
+}
+```
+
+
+
+初始化KafkaBolt
+
+- 设置producer的基本属性
+- 设置withTopicSelector，指定写入的topic
+- 设置 withTupleToKafkaMapper，将Tuple转换成kafka存储对应的消息
+
+```java
+protected static KafkaBolt initKafkaBolt() {
+
+  // 设置producer属性
+  Properties props = new Properties();
+  props.put("bootstrap.servers", "localhost:9092");
+  props.put("acks", "1");
+  props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+  props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+  KafkaBolt kafkaBolt = new KafkaBolt()
+                .withProducerProperties(props)
+                .withTopicSelector(new DefaultTopicSelector(TOPIC_RESULT))
+                .withTupleToKafkaMapper(new FieldNameBasedTupleToKafkaMapper<>());
+
+  return kafkaBolt;
+}
+```
+
+
+
+详情见代码: https://github.com/harryyu1018/workshop-for-storm/blob/master/word-count/src/main/java/top/yujy/wordcount/KafkaSpoutTopology.java
+
+
+
+
+
+## 二、KafkaConfig
 
 
 
@@ -144,7 +211,7 @@ This means that when a topology has run once the setting `KafkaConfig.startOffs
 
 
 
-## KafkaSpout分析
+## 三、KafkaSpout浅析
 
 **原理**
 
@@ -157,23 +224,255 @@ This means that when a topology has run once the setting `KafkaConfig.startOffs
 
 
 
+
+
+### Partition 分配策略
+
+1. 在KafkaSpout中获取spout的task的个数，对应的就是consumer的个数，如下:
+
+```java
+int totalTasks = context.getComponentTasks(context.getThisComponentId()).size();
+```
+
+
+
+2. 获取partition与leader partition所在broker的映射关系
+
+
+
+2.1	kafkaSpout 创建实际消费Partition的Consumer包装对象DynamicPartitionConnections。其内部会创建SimpleConsumer对象用于消费partition。
+
+```java
+// DynamicPartitionConnections _connections;
+_connections = new DynamicPartitionConnections(_spoutConfig, KafkaUtils.makeBrokerReader(conf, _spoutConfig));
+```
+
+
+
+2.2 	**ZkBrokerReader** 创建时会同时创建用于动态读取Broker信息的DynamicBrokersReader对象，并且获得拉取数据源topic中partition和对应leader映射关系的Map结构（最后获得List<GlobalPartitionInformation>对象）。
+
+```java
+public ZkBrokerReader(Map conf, String topic, ZkHosts hosts) {
+  try {
+    // 创建动态读取Broker信息的Reader对象
+    reader = new DynamicBrokersReader(conf, hosts.brokerZkStr, hosts.brokerZkPath, topic);
+    
+    // 实际执行读取Broker信息，并cache住partition和其leader信息
+    cachedBrokers = reader.getBrokerInfo();
+    
+    // 上次刷新时间 & 刷新时间间隔，用于动态定时更新broker信息
+    lastRefreshTimeMs = System.currentTimeMillis();
+    refreshMillis = hosts.refreshFreqSecs * 1000L;
+  
+  } catch (java.net.SocketTimeoutException e) {
+    LOG.warn("Failed to update brokers", e);
+  }
+
+}
+```
+
+
+
+2.3	**DynamicBrokersReader** 中的getBrokerInfo方法读取topic对应每个partition的leader节点（broker id）
+
+```java
+public List<GlobalPartitionInformation> getBrokerInfo() throws SocketTimeoutException {
+  	  // 读取spout指定的topic
+  List<String> topics =  getTopics();
+  List<GlobalPartitionInformation> partitions =  new ArrayList<GlobalPartitionInformation>();
+
+  for (String topic : topics) {
+    GlobalPartitionInformation globalPartitionInformation = new GlobalPartitionInformation(topic, this._isWildcardTopic);
+    
+    try {
+      // 获取topic的所有分区总数
+      // '/brokers/topics/[topicName]/partitions'
+      // 子节点: [0, 1] --> partition ids
+      int numPartitionsForTopic = getNumPartitions(topic);
+      
+      // 读取kafka上对应broker的路径
+      // '/brokers/ids'
+      // [0, 1] --> broker ids
+      String brokerInfoPath = brokerPath();
+      
+      // 遍历所有分区
+      for (int partition = 0; partition < numPartitionsForTopic; partition++) {
+        
+        // 获取对应分区的leader（broker id）
+        // '/brokers/topics/[topicName]/partitions/[partitionId]/state'
+        // 节点中的值: {"controller_epoch":1,"leader":0,"version":1,"leader_epoch":0,"isr":[0]}
+        int leader = getLeaderFor(topic,partition);
+        
+        // '/brokers/ids/[brokerId]'
+        String path = brokerInfoPath + "/" + leader;
+        
+        try {
+          // 读取leader broker信息, 并以 <partitionId, Broker对象>kv存储
+          byte[] brokerData = _curator.getData().forPath(path);
+          Broker hp = getBrokerHost(brokerData);
+          globalPartitionInformation.addPartition(partition, hp);
+        
+        } catch (org.apache.zookeeper.KeeperException.NoNodeException e) {
+          LOG.error("Node {} does not exist ", path);
+        }
+      }
+    
+    } catch (SocketTimeoutException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+    
+    LOG.info("Read partition info from zookeeper: " + globalPartitionInformation);
+    partitions.add(globalPartitionInformation);
+  
+  }
+  return partitions;
+}
+```
+
+
+
+简单说一下GlobalPartitionInformation，这个类主要存储的是某一个topic，topic包含分区和对应Leader Broker的映射Map结构，代码如下：
+
+```java
+public class GlobalPartitionInformation implements Iterable<Partition>, Serializable {
+  private Map<Integer, Broker> partitionMap;
+  public String topic;
+  
+  // something ...
+}
+```
+
+
+
+3.	在KafkaSpout中获取当前spout的 task index。需要注意，task index 和 task id是不同的，task id是当前spout在整个topology中的id，而 task index 是当前spout在组件中的id，取值范围为[0, spout_task_number - 1]，代码如下：
+
+```java
+// PartitionCoordinator _coordinator;
+_coordinator = new ZkCoordinator(_connections, conf, _spoutConfig, _state, context.getThisTaskIndex(), totalTasks, topologyInstanceId);
+```
+
+
+
+接口实现结构：
+
+PartitionCoordinator
+
+- ZkCoordinator
+- StaticCoordinator
+
+
+
+4. 获取当前spout的task消费的partition
+
+```java
+public static List<Partition> calculatePartitionsForTask(List<GlobalPartitionInformation> partitons, int totalTasks, int taskIndex) {
+  
+  Preconditions.checkArgument(taskIndex < totalTasks, "task index must be less that total tasks");
+  
+  List<Partition> taskPartitions = new ArrayList<Partition>();
+  List<Partition> partitions = new ArrayList<Partition>();
+  
+  // 获取排序后的partition集合
+  for(GlobalPartitionInformation partitionInformation : partitons) {
+    partitions.addAll(partitionInformation.getOrderedPartitions());
+  }
+  
+  // 如果spout的task个数多余partition，那么有的task将会standby
+  int numPartitions = partitions.size();
+  if (numPartitions < totalTasks) {
+    LOG.warn("there are more tasks than partitions (tasks: " + totalTasks + "; partitions: " + numPartitions + "), some tasks will be idle");
+  }
+  
+  // 核心部分
+  // 每个task按照index的顺序依次获取指定下标号的partition
+  // 假设spout的并发度是3，当前spout的task index 是 1，总的partition的个数为5，那么当前spout消费的partition id为1,4
+  for (int i = taskIndex; i < numPartitions; i += totalTasks) {
+    Partition taskPartition = partitions.get(i);
+    taskPartitions.add(taskPartition);
+  }
+  
+  logPartitionMapping(totalTasks, taskIndex, taskPartitions);
+  return taskPartitions;
+
+}
+
+```
+
+
+
+
+
+### Partition 更新策略
+
+如果出现spout task挂掉，或者broker宕机，那么spout是要重新分配partition的。KafkaSpout的设计中并没有监听ZK上的broker节点、partition节点和其他spout的状态，所以当有异常情况出现时KafkaSpout并不知道。为了解决这个问题，其采用了两种方法来更新partition的分配。
+
+
+
+1. 定时更新
+
+根据ZKHosts中的refreshFreqSecs字段来设置定时更新partition列表，可以通过修改配置来更改定时刷新的间隔（实际上最终是传递给`ZkCoordinator的_refreshFreqMs`）。每一次调用KafkaSpout的nextTuple方法时，都会首先调用 **ZkCoordinator** 的 **getMyManagedPartitions**  方法来获取当前spout消费的partition列表。
+
+
+
+**ZkCoordinator**
+
+```java
+@Override
+public List<PartitionManager> getMyManagedPartitions() {
+  // 首次启动 or 达到更新间隔
+  if (_lastRefreshTime == null || (System.currentTimeMillis() - _lastRefreshTime) > _refreshFreqMs) {
+    
+    // 实际更新方法
+    refresh();
+    _lastRefreshTime = System.currentTimeMillis();
+  }
+  
+  // List<PartitionManager> _cachedList = new ArrayList<PartitionManager>();
+  // spout中实际消费数据最终都委托给PartitionManager
+  return _cachedList;
+
+}
+```
+
+
+
+2. 异常更新
+
+当调用KafkaSpout的nextTuple方法出现异常时，强制更新当前spout task的partition消费列表
+
+
+
+### KafkaSpout获取每条Tuple的原理
+
+
+
 **nextTuple()获取Tuple流程**
 
 1. 从_coordinate中获取负责的分区列表PartitionManager
 2. 遍历分区列表，依次调用其next方法发送Tuple
-3. ​
+3. 委托给PartitionManager的next方法进行操作Tuple
+4. ​
 
 
 ```java
 @Override
 public void nextTuple() {
+  // 获取该spout task所有负责的partition对应的PartitionManager
   List<PartitionManager> managers = _coordinator.getMyManagedPartitions();
-  for (int i = 0; i < managers.size(); i++) {
-   
+  
+  for (int i = 0; i < managers.size(); i++) { 
     try {
-      // in case the number of managers decreased
+      // 获取本次操作的Partition Index(managers中的下标号)
+      // mod是为了防止越界
       _currPartitionIndex = _currPartitionIndex % managers.size();
+      
+      // 实际委托给PartitionManager的next方法进行操作Tuple
+      // 返回Emit的状态，有三种: EMITTED_MORE_LEFT, EMITTED_END, NO_EMITTED
       EmitState state = managers.get(_currPartitionIndex).next(_collector);
+      
+      // 如果当前分区没有消息了,轮询到下一个
       if (state != EmitState.EMITTED_MORE_LEFT) {
         _currPartitionIndex = (_currPartitionIndex + 1) % managers.size();
       }
@@ -186,6 +485,7 @@ public void nextTuple() {
     }
   }
 
+  // 确定commit到ZK的时间周期，到达周期就触发提交
   long diffWithNow = System.currentTimeMillis() - _lastUpdateMs;
 
   /*
@@ -229,7 +529,6 @@ private void commit() {
     manager.commit();
   }
 }
-
 ```
 
 
@@ -265,50 +564,73 @@ static enum EmitState {
 
 ```java
 public EmitState next(SpoutOutputCollector collector) {
-        if (_waitingToEmit.isEmpty()) {
-            fill();
-        }
-        while (true) {
-            MessageAndOffset toEmit = _waitingToEmit.pollFirst();
-            if (toEmit == null) {
-                return EmitState.NO_EMITTED;
-            }
-
-            Iterable<List<Object>> tups;
-            if (_spoutConfig.scheme instanceof MessageMetadataSchemeAsMultiScheme) {
-                tups = KafkaUtils.generateTuples((MessageMetadataSchemeAsMultiScheme) _spoutConfig.scheme, toEmit.message(), _partition, toEmit.offset());
-            } else {
-                tups = KafkaUtils.generateTuples(_spoutConfig, toEmit.message(), _partition.topic);
-            }
-            
-            if ((tups != null) && tups.iterator().hasNext()) {
-               if (!Strings.isNullOrEmpty(_spoutConfig.outputStreamId)) {
-                    for (List<Object> tup : tups) {
-                        collector.emit(_spoutConfig.topic, tup, new KafkaMessageId(_partition, toEmit.offset()));
-                    }
-                } else {
-                    for (List<Object> tup : tups) {
-                        collector.emit(tup, new KafkaMessageId(_partition, toEmit.offset()));
-                    }
-                }
-                break;
-            } else {
-                ack(toEmit.offset());
-            }
-        }
-        if (!_waitingToEmit.isEmpty()) {
-            return EmitState.EMITTED_MORE_LEFT;
-        } else {
-            return EmitState.EMITTED_END;
-        }
+  
+  // 如果等待emit队列已空
+  // 则再次从Partition中拉取数据
+  if (_waitingToEmit.isEmpty()) {
+    fill();
+  }
+  
+  while (true) {
+    // 从等待emit队列取出第一条
+    // 如果没有消息，说明对应的partition当前已经没有数据了,返回 NO_EMITED 状态
+    MessageAndOffset toEmit = _waitingToEmit.pollFirst();
+    if (toEmit == null) {
+      return EmitState.NO_EMITTED;
     }
+
+    // 根据Scheme反序列化得到消息(tuple集合)
+    Iterable<List<Object>> tups;
+    if (_spoutConfig.scheme instanceof MessageMetadataSchemeAsMultiScheme) {
+      tups = KafkaUtils.generateTuples((MessageMetadataSchemeAsMultiScheme) _spoutConfig.scheme, toEmit.message(), _partition, toEmit.offset());
+    } else {
+      tups = KafkaUtils.generateTuples(_spoutConfig, toEmit.message(), _partition.topic);
+    }
+            
+    // 如果当前消息反序列化的tuple集合不为空，那么使用collector发送消息
+    if ((tups != null) && tups.iterator().hasNext()) {
+      if (!Strings.isNullOrEmpty(_spoutConfig.outputStreamId)) {
+        
+        for (List<Object> tup : tups) {
+          collector.emit(_spoutConfig.topic, tup, new KafkaMessageId(_partition, toEmit.offset()));
+        }
+      } else {
+        
+        for (List<Object> tup : tups) {
+          collector.emit(tup, new KafkaMessageId(_partition, toEmit.offset()));
+        }
+      }
+      
+      // 跳出
+      break;
+    
+    } else {
+      // 如果该条消息反序列化后为空，则直接ack当前offset，并继续处理下一条，直至
+      // 反序列化结果不为空
+      ack(toEmit.offset());
+    }
+  }
+  
+  // 处理完一条消息后，如果等待emit队列不为空，则返回 EMITTED_MORE_LEFT 状态
+  if (!_waitingToEmit.isEmpty()) {
+    return EmitState.EMITTED_MORE_LEFT;
+  } else {
+    return EmitState.EMITTED_END;
+  }
+}
 ```
 
 
 
-### KafkaSpout流程示意
+
+
+#### KafkaSpout流程示意
 
  
+
+![](img/KafkaSpout消费队列逻辑.png)
+
+
 
 - emittedToOffset: 已经从kafka读到的最大offset
 - committedTo: 已经确认处理完的最大offset
@@ -318,10 +640,68 @@ public EmitState next(SpoutOutputCollector collector) {
 
 
 
+#### 定时commit
+
+```java
+public long lastCompletedOffset() {
+  if (_pending.isEmpty()) {
+    return _emittedToOffset;
+  } else {
+    return _pending.firstKey();
+  }
+}
+
+public void commit() {
+  
+  // 当前完成的最新进度
+  long lastCompletedOffset = lastCompletedOffset();
+  
+  // _committedTo 上次提交到 ZK中的消费进度 offset, 不相等则不进行commit
+  if (_committedTo != lastCompletedOffset) {
+    
+    LOG.debug("Writing last completed offset ({}) to ZK for {} for topology: {}", lastCompletedOffset, _partition, _topologyInstanceId);
+    
+    // 存储消费情况的json数据
+    Map<Object, Object> data = (Map<Object, Object>) ImmutableMap.builder()
+                    .put("topology", ImmutableMap.of("id", _topologyInstanceId,
+                            "name", _stormConf.get(Config.TOPOLOGY_NAME)))
+                    .put("offset", lastCompletedOffset)
+                    .put("partition", _partition.partition)
+                    .put("broker", ImmutableMap.of("host", _partition.host.host,
+                            "port", _partition.host.port))
+                    .put("topic", _partition.topic).build();
+    
+    _state.writeJSON(committedPath(), data);
+
+    // 更新上次提交的消费点位offset
+    _committedTo = lastCompletedOffset;
+    
+    LOG.debug("Wrote last completed offset ({}) to ZK for {} for topology: {}", lastCompletedOffset, _partition, _topologyInstanceId);
+  
+  } else {
+    LOG.debug("No new offset for {} for topology: {}", _partition, _topologyInstanceId);
+  }
+}
+```
+
+
+
 **commit内容**
 
 ```json
-
+{
+  "topology": {
+    "id": "kafka-spout-demo-1-1489642910",
+    "name": "kafka-spout-demo"
+  },
+  "offset": 2,
+  "partition": 0,
+  "broker": {
+    "host": "ZB-PC0DD5WG.360buyAD.local",
+    "port": 9092
+  },
+  "topic": "topic-storm"
+}
 ```
 
 
