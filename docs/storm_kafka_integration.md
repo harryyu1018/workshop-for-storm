@@ -154,42 +154,48 @@ This means that when a topology has run once the setting `KafkaConfig.startOffs
 - ack()标记已处理的tuple，用来更新消费的offset，消费过的offset就不再重复了
 - fail()标记未处理完的tuple，用来重新从kafka取到未处理完的数据进行消费
 
- 
 
+
+
+**nextTuple()获取Tuple流程**
+
+1. 从_coordinate中获取负责的分区列表PartitionManager
+2. 遍历分区列表，依次调用其next方法发送Tuple
+3. ​
 
 
 ```java
 @Override
-    public void nextTuple() {
-        List<PartitionManager> managers = _coordinator.getMyManagedPartitions();
-        for (int i = 0; i < managers.size(); i++) {
-
-            try {
-                // in case the number of managers decreased
-                _currPartitionIndex = _currPartitionIndex % managers.size();
-                EmitState state = managers.get(_currPartitionIndex).next(_collector);
-                if (state != EmitState.EMITTED_MORE_LEFT) {
-                    _currPartitionIndex = (_currPartitionIndex + 1) % managers.size();
-                }
-                if (state != EmitState.NO_EMITTED) {
-                    break;
-                }
-            } catch (FailedFetchException e) {
-                LOG.warn("Fetch failed", e);
-                _coordinator.refresh();
-            }
-        }
-
-        long diffWithNow = System.currentTimeMillis() - _lastUpdateMs;
-
-        /*
-             As far as the System.currentTimeMillis() is dependent on System clock,
-             additional check on negative value of diffWithNow in case of external changes.
-         */
-        if (diffWithNow > _spoutConfig.stateUpdateIntervalMs || diffWithNow < 0) {
-            commit();
-        }
+public void nextTuple() {
+  List<PartitionManager> managers = _coordinator.getMyManagedPartitions();
+  for (int i = 0; i < managers.size(); i++) {
+   
+    try {
+      // in case the number of managers decreased
+      _currPartitionIndex = _currPartitionIndex % managers.size();
+      EmitState state = managers.get(_currPartitionIndex).next(_collector);
+      if (state != EmitState.EMITTED_MORE_LEFT) {
+        _currPartitionIndex = (_currPartitionIndex + 1) % managers.size();
+      }
+      if (state != EmitState.NO_EMITTED) {
+        break;
+      }
+    } catch (FailedFetchException e) {
+      LOG.warn("Fetch failed", e);
+      _coordinator.refresh();
     }
+  }
+
+  long diffWithNow = System.currentTimeMillis() - _lastUpdateMs;
+
+  /*
+  	As far as the System.currentTimeMillis() is dependent on System clock,
+  	additional check on negative value of diffWithNow in case of external changes.
+  	*/
+  if (diffWithNow > _spoutConfig.stateUpdateIntervalMs || diffWithNow < 0) {
+    commit();
+  }
+}
 ```
 
 
@@ -312,10 +318,20 @@ public EmitState next(SpoutOutputCollector collector) {
 
 
 
+**commit内容**
+
+```json
+
+```
+
+
+
+
+
 
 ## KafkaBolt分析
 
-关键参数：
+**关键参数：**
 
 - TopicSelector: 数据写到哪个topic
 - TupleToKafkaMapper: 从Storm的tuple选择哪些字段写Kafka
@@ -324,14 +340,69 @@ public EmitState next(SpoutOutputCollector collector) {
 
 
 
-原理：
+**原理：**
 
 - TopicSelector决定写入哪个topic
   - DefaultTopicSelector可以指定固定的topic
 - TupleToKafkaMapper决定写入tuple中的哪些数据
-  - FieldNameBased 
+  - FieldNameBasedTupleToKafkaMapper 默认取tuple中的“key”字段为partition key，“message”字段作为待写入的对象，**字段名可定制**
+- serilaiizer class决定怎么序列化要写入kafka的对象
+  - StringEncoder把String对象序列化成byte[]
+- kafka producer相关的其他配置
 
- 
+
+
+
+```java
+@Override
+public void prepare(Map stormConf, TopologyContext context, OutputCollector collector) {
+  //for backward compatibility.
+  if(mapper == null) {
+    this.mapper = new FieldNameBasedTupleToKafkaMapper<K,V>();
+  }
+
+  //for backward compatibility.
+  if(topicSelector == null) {
+    this.topicSelector = new DefaultTopicSelector((String) stormConf.get(TOPIC));
+  }
+
+  producer = new KafkaProducer<>(boltSpecfiedProperties);
+  this.collector = collector;
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
