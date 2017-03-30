@@ -28,5 +28,9 @@
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka_2.10</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.apache.storm</groupId>
+      <artifactId>storm-redis</artifactId>
+    </dependency>
   </dependencies>
 </project>

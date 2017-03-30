@@ -94,6 +94,12 @@
 - 构建流处理的Trident State
 - 构建用于查询state的Trident DRPC流
 
+
+
+![](img/batched-stream.png)
+
+
+
 ```java
 private static final int MAX_BATCH_SIZE = 3;
 private static final Values[] dataset = {
@@ -134,12 +140,12 @@ public static StormTopology buildTopology(LocalDRPC drpc) {
 ```java
 public static class Split extends BaseFunction {
 
-	@Override
-    public void execute(TridentTuple tuple, TridentCollector collector) {
-      String sentence = tuple.getString(0);
-      for (String word : sentence.split(" ")) {
-        collector.emit(new Values(word));
-      }
+  @Override
+  public void execute(TridentTuple tuple, TridentCollector collector) {
+    String sentence = tuple.getString(0);
+    for (String word : sentence.split(" ")) {
+      collector.emit(new Values(word));
+    }
 }
 ```
 
@@ -169,6 +175,31 @@ public class Count implements CombinerAggregator<Long> {
 ```
 
 
+
+#### 将结果存入外部存储—Redis为例
+
+参考`top.yujy.wordcount.TridentWordCountAndStoreIntoRedis`实现
+
+```java
+// 定义Redis的信息
+JedisPoolConfig jedisPoolConfig = new JedisPoolConfig.Builder()
+                .setHost("localhost").setPort(6379).build();
+
+// 使用Redis Hash 进行存储
+RedisDataTypeDescription typeDescription = new RedisDataTypeDescription(RedisDataTypeDescription.RedisDataType.HASH, "wc");
+
+TridentTopology topology = new TridentTopology();
+TridentState state = topology.newStream("spout1", spout).parallelismHint(16)
+  .each(new Fields("sentence"), new Split(), new Fields("word"))
+  .groupBy(new Fields("word"))
+  .persistentAggregate(
+  	// 这个地方使用RedisMapState 取代 内存存储 MemoryMapState
+  	// 注意一定要使用RedisMapState, 如果使用RedisState会报错
+  	RedisMapState.transactional(jedisPoolConfig, typeDescription), 
+  	new Count(), 
+  	new Fields("count"))
+  .parallelismHint(16);
+```
 
 
 
