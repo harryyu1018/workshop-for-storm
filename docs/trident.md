@@ -213,6 +213,26 @@ TridentState state = topology.newStream("spout1", spout).parallelismHint(16)
 
 
 
+## Trident 进阶
+
+
+
+### Trident 拓扑运行
+
+Trident 拓扑会被编译成一种尽可能和普通拓扑有着同样的运行效率的形式。只有在请求数据的重新分配（比如 groupBy 或者 shuffle 操作）时 tuple 才会被发送到网络中。因此，像下面这样的 Trident 拓扑：
+
+![](img/trident-to-storm1.png)
+
+它会被编译成如下的Storm Topology
+
+
+
+![](img/trident-to-storm2.png)
+
+
+
+
+
 
 ## Trident 原理
 
