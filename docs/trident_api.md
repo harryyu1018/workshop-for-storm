@@ -12,11 +12,11 @@ Trident 中有 5 类操作：
 
 
 
-## 本地分区操作
+## 1. 本地分区操作
 
 本地分区操作是在每个分区块上独立运行的操作，其中不涉及网络数据传输。
 
-### 函数
+### 函数 Functions
 
 函数负责接收一个输入域的集合并选择输出或者不输出 tuple。输出 tuple 的域会被添加到原始数据流的输入域中。如果一个函数不输出 tuple，那么原始的输入 tuple 就会被直接过滤掉。否则，每个输出 tuple 都会复制一份输入 tuple 。假设你有下面这样的函数：
 
@@ -57,7 +57,7 @@ mystream.each(new Fields("b"), new MyFunction(), new Fields("d")))
 
 
 
-### 过滤器
+### 过滤器 Filters
 
 过滤器负责判断输入的 tuple 是否需要保留。以下面的过滤器为例：
 
@@ -249,3 +249,42 @@ mystream.chainedAgg()
 ```
 
 这段代码会在每个分区上分别执行 Count 和 Sum 聚合器，而输出中只会包含一个带有 [“count”, “sum”] 域的单独的 tuple。
+
+
+
+### projection
+
+方法只会保留操作中指定的域。如果你有一个带有 [“a”, “b”, “c”, “d”] 域的数据流，通过执行这段代码：
+
+```
+mystream.project(new Fields("b", "d"))
+```
+
+就会使得输出数据流中只包含有 [“b”, “d”] 域。
+
+
+
+## 2. 重分区操作
+
+重分区操作会执行一个用来改变在不同的任务间分配 tuple 的方式的函数。在重分区的过程中分区的数量也可能会发生变化（例如，重分区之后的并行度就有可能会增大）。重分区会产生一定的网络数据传输。下面是重分区操作的几个函数：
+
+1. shuffle：通过随机轮询算法来重新分配目标区块的所有 tuple。
+2. broadcast：每个 tuple 都会被复制到所有的目标区块中。这个函数在 DRPC 中很有用 —— 比如，你可以使用这个函数来获取每个区块数据的查询结果。
+3. partitionBy：该函数会接收一组域作为参数，并根据这些域来进行分区操作。可以通过对这些域进行哈希化，并对目标分区的数量取模的方法来选取目标区块。partitionBy 函数能够保证来自同一组域的结果总会被发送到相同的目标区间。
+4. global：这种方式下所有的 tuple 都会被发送到同一个目标分区中，而且数据流中的所有的块都会由这个分区处理。
+5. batchGlobal：同一个 batch 块中的所有 tuple 会被发送到同一个区块中。当然，在数据流中的不同区块仍然会分配到不同的区块中。
+6. partition：这个函数使用自定义的分区方法，该方法会实现 `org.apache.storm.grouping.CustomStreamGrouping` 接口。
+
+
+
+## 3. 数据流分组操作
+
+通过对指定的域执行 partitionBy 操作，groupBy 操作可以将数据流进行重分区，使得相同的域的 tuple 分组可以聚集在一起。例如，下面是一个 groupBy 操作的示例：
+
+![](img/storm-grouping.png)
+
+
+
+如果你在分组数据流上执行聚合操作，聚合器会在每个分组（而不是整个区块）上运行。persistentAggregate 同样可以在一个分组数据里上运行，这种情况下聚合结果会存储在 [MapState](https://github.com/apache/storm/blob/master/storm-core/src/jvm/storm/trident/state/map/MapState.java) 中，其中的 key 就是分组的域名。
+
+和其他操作一样，对分组数据流的聚合操作也可以以链式的方式执行。
