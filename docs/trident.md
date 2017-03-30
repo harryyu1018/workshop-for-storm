@@ -81,10 +81,91 @@
 
 
 
-Trident WordCount Demo
+
+### Trident Examples
+
+
+
+#### Word Count for Trident 的实现
+
+**构建Trident Topology**
+
+- 生成固定批处理大小的Spout
+- 构建流处理的Trident State
+- 构建用于查询state的Trident DRPC流
 
 ```java
+private static final int MAX_BATCH_SIZE = 3;
+private static final Values[] dataset = {
+    new Values("the cow jumped over the moon"),
+    new Values("the man went to the store and bought some candy"),
+    new Values("four score and seven years ago"),
+    new Values("how many apples can you eat"),
+    new Values("to be or not to be the person")
+};
 
+public static StormTopology buildTopology(LocalDRPC drpc) {
+  // 生成固定批处理大小的Spout
+  FixedBatchSpout spout = new FixedBatchSpout(new Fields("sentence"), MAX_BATCH_SIZE, dataset);
+  spout.setCycle(true);
+
+  TridentTopology topology = new TridentTopology();
+  TridentState state = topology.newStream("spout1", spout).parallelismHint(16)
+                .each(new Fields("sentence"), new Split(), new Fields("word"))
+                .groupBy(new Fields("word"))
+                .persistentAggregate(new MemoryMapState.Factory(), new Count(), new Fields("count")).parallelismHint(16);
+
+  topology.newDRPCStream("words", drpc)
+                .each(new Fields("args"), new Split(), new Fields("word"))
+                .groupBy(new Fields("word"))
+                .stateQuery(state, new Fields("word"), new MapGet(), new Fields("count"))
+                .each(new Fields("count"), new FilterNull())
+                .aggregate(new Fields("count"), new Sum(), new Fields("sum"));
+
+  return topology.build();
+}
+```
+
+**分词方法Split**
+
+- 方法继承BaseFunction(org.apache.storm.trident.operation)
+- 在execute里面编写对应的实现
+
+```java
+public static class Split extends BaseFunction {
+
+	@Override
+    public void execute(TridentTuple tuple, TridentCollector collector) {
+      String sentence = tuple.getString(0);
+      for (String word : sentence.split(" ")) {
+        collector.emit(new Values(word));
+      }
+}
+```
+
+**求和方法Count（Trident内置）**
+
+```java
+// package org.apache.storm.trident.operation.builtin;
+
+public class Count implements CombinerAggregator<Long> {
+
+    @Override
+    public Long init(TridentTuple tuple) {
+        return 1L;
+    }
+
+    @Override
+    public Long combine(Long val1, Long val2) {
+        return val1 + val2;
+    }
+
+    @Override
+    public Long zero() {
+        return 0L;
+    }
+    
+}
 ```
 
 
@@ -175,6 +256,8 @@ Trident WordCount Demo
 - partition local的一个或多个TridentOperator组成一个Bolt
 - 每个repartition操作对应一次StreamGrouping，产生新的Bolt
 - 最终生成一个普通的StormTopology
+
+
 
 
 
