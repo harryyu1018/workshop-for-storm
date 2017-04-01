@@ -82,3 +82,47 @@ weight.9=1
 
 
 
+## ZooKeeper四字命令
+
+| 命令   | 说明                                       |
+| ---- | ---------------------------------------- |
+| conf | ( new in 3.3.0 ) 输出服务器相关详细信息             |
+| cons | ( new in 3.3.0 ) 列出所有连接到服务器的客户端的完全的连接/会话的详细信息。包括接收/发送的包数量、会话id、操作延迟、最后的操作执行等等 |
+| crst | ( new in 3.3.0 ) 清空全部连接的连接/会话统计信息        |
+| dump | 输出未经处理的会话和临时节点。这个仅仅只在leader节点上有效果        |
+| envi | 输出ZK所在服务器运行时的环境信息                        |
+| ruok | **测试服务是否处于正确状态**。如果确实如此，那么服务返回"imok"，否则不做任何响应 |
+| srst | 重置所有服务器的统计信息                             |
+| srvr | ( new in 3.3.0 ) 输出ZK服务器端完整的运行时状态信息。不会输出客户端连接情况 |
+| stat | 获取ZK服务器的运行时状态的概要信息，包括基本的ZK版本、打包信息、运行时角色、集群数据节点个数等信息。另外，还会将当前服务器的客户端连接信息打印出来 |
+| wchs | 输出当前服务器上管理的Watcher的概要信息                  |
+| wchc | ( new in 3.3.0 ) 输出当前服务器上管理的Watcher的详细信息，以**会话为单位**进行分组，同时列出被该会话注册了Watcher的节点路径 |
+| wchp | ( new in 3.3.0 ) 输出当前服务器上管理的Watcher的详细信息，以**节点路径为单位**进行分组，同时列出注册了该Watcher的会话 |
+| mntr | ( new in 3.4.0 ) 用于比stat命令输出更为详尽的服务器统计信息，包括请求处理的延迟情况、服务器内存数据库大小和集群的数据同步情况。输出结果每一行都是一个key-value的键值对。 |
+
+
+
+mntr的结果
+
+```shell
+$ echo mntr | nc localhost 2185
+
+zk_version  3.4.0
+zk_avg_latency  0
+zk_max_latency  0
+zk_min_latency  0
+zk_packets_received 70
+zk_packets_sent 69
+zk_outstanding_requests 0
+zk_server_state leader
+zk_znode_count   4
+zk_watch_count  0
+zk_ephemerals_count 0
+zk_approximate_data_size    27
+zk_followers    4                   - only exposed by the Leader
+zk_synced_followers 4               - only exposed by the Leader
+zk_pending_syncs    0               - only exposed by the Leader
+zk_open_file_descriptor_count 23    - only available on Unix platforms
+zk_max_file_descriptor_count 1024   - only available on Unix platforms
+```
+
