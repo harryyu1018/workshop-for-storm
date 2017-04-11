@@ -350,6 +350,139 @@ Trident 拓扑会被编译成一种尽可能和普通拓扑有着同样的运行
 
 
 
+## Trident 深入分析
+
+TridentSpout和TridentState几种组合
+
+- Non-transactional: 不能做到exactly once，没有额外状态状态存储
+- Transactional: 能做到exactly once，要求spout emit的batch和txid的固定，但是除了数据本身，**额外存储了txid状态**
+- Opaque transactional: 能做到exactly once，不要求spout emit的batch和txid固定，但是除了数据本身，**额外存储了txid和更新前的数据状态**
+
+
+
+![](img/trident_spout_vs_state.png)
+
+
+
+### Transactional exactly once
+
+- 存储value，txid
+- txid不同时更新value
+- txid相同时不更新value
+
+
+
+### Opaque Transactional exactly once
+
+- 存储current value, previous value, txid
+- txid不同时在current上更新，pre也更新
+- txid相同时在current上更新，pre不更新
+
+
+
+### TridentSpout
+
+- IBatchSpout: Non-Transactional
+- IPartitionedTridentSpout: Transactional
+- IOpaquePartitionedTridentSpout: Opaque
+
+
+
+TridentState
+
+- 基本接口（partitionPersist使用）
+- 高级接口（persistentAggregate使用）
+
+
+
+```java
+public interface State {
+    void beginCommit(Long txid);
+    void commit(Long txid);
+}
+
+public interface StateFactory extends Serializable {
+    State makeState(Map conf, IMetricsContext metrics, int partitionIndex, int numPartitions);
+}
+
+public interface StateUpdater<S extends State> extends Operation {
+    void updateState(S state, List<TridentTuple> tuples, TridentCollector collector);
+}
+```
+
+
+
+```java
+public interface MapState<T> extends ReadOnlyMapState<T> {
+    List<T> multiUpdate(List<List<Object>> keys, List<ValueUpdater> updaters);
+    void multiPut(List<List<Object>> keys, List<T> vals);
+}
+
+public interface IBackingMap<T> {
+    List<T> multiGet(List<List<Object>> keys); 
+    void multiPut(List<List<Object>> keys, List<T> vals); 
+}
+
+// 给IBackingMap增加LRU内存缓存
+public class CachedMap<T> implements IBackingMap<T> {}
+
+// 基于IBackingMap构造NonTransactional state
+public class NonTransactionalMap<T> implements MapState<T> {}
+
+// 基于IBackingMap构造Transactional state
+public class TransactionalMap<T> implements MapState<T> {}
+
+// 基于IBackingMap构造OpaqueTransactional state
+public class OpaqueMap<T> implements MapState<T> {}
+```
+
+
+
+### TransactionalTridentKafkaSpout 内部浅析
+
+> 核心: 如何保证replay时tuple batch和txid保持一致
+
+- TransactionalTridentKafkaSpout负责维护tuple batch和kafka offset的关系
+- PartitionedTransactionalSpoutExecutor负责维护txid和tuple batch的关系，把关系存到zk
+
+
+
+1. PartitionedTransactionalSpoutExecutor调用emitPartitionBatchNew emit新tuple batch，返回meta信息，其中包括kafka的起止offset
+2. PartitionedTransactionalSpoutExecutor把meta信息存储到ZK上
+3. PartitionedTransactionalSpoutExecutor在tuple batch fail 时调用emitPartitionBatch做replay，会传入对应的meta信息
+4.  emitPartitionBatch根据meta信息中的起止offset精准回放
+
+
+
+### RedisState内部浅析
+
+> 如何存储/更新状态到redis
+
+- RedisState实现IBackingMap的multiGet和multiPut方法，用来批量读写redis
+- NonTransactionalMap负责把RedisState包装成NonTransactional的MapState
+- TransactionalMap负责把RedisState包装成Transactional的MapState
+- OpaqueMap负责把RedisState包装成OpaqueTransactional的MapState
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
