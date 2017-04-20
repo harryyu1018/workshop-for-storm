@@ -352,12 +352,30 @@ Trident 拓扑会被编译成一种尽可能和普通拓扑有着同样的运行
 
 ## Trident 深入分析
 
+Trident 中含有对状态化（stateful）的数据源进行读取和写入操作的一级抽象封装工具。这个所谓的状态（state）既可以保存在拓扑内部（保存在内存中并通过 HDFS 来实现备份），也可以存入像 Memcached 或者 Cassandra 这样的外部数据库中。而对于 Trident API 而言，这两种机制并没有任何区别。
+
+Trident 使用一种容错性的方式实现对 state 的管理，这样，即使在发生操作失败或者重试的情况下状态的更新操作仍然是幂等的。基于这个机制，每条消息都可以看作被恰好处理了一次，然后你就可以很容易地推断出 Trident 拓扑的状态。
+
+
+
+Trident 提供了一种支持恰好一次处理的语义，如下所述：
+
+1. 通过小数据块（batch）的方式来处理 tuple
+2. 为每个 batch 提供一个唯一的 id，这个 id 称为 “事务 id”（transaction id，txid）。如果需要对 batch 重新处理，这个 batch 上仍然会赋上相同的 txid。
+3. State 的更新操作是按照 batch 的顺序进行的。也就是说，在 batch 2 完成处理之前，batch 3 的状态更新操作不会进行。
+
+
+
 TridentSpout和TridentState几种组合
 
 - Non-transactional: 不能做到exactly once，没有额外状态状态存储
 - Transactional: 能做到exactly once，要求spout emit的batch和txid的固定，但是除了数据本身，**额外存储了txid状态**
-- Opaque transactional: 能做到exactly once，不要求spout emit的batch和txid固定，但是除了数据本身，**额外存储了txid和更新前的数据状态**
+- Opaque transactional: 能做到exactly once，不要求spout emit的batch和txid固定，但是除了数据本身，**额外存储了txid和更新前（pre）的数据状态**
 
+
+
+
+不同的Spout和State能否支持恰好一次的消息处理语义（exactly once）？
 
 
 ![](img/trident_spout_vs_state.png)
@@ -366,17 +384,55 @@ TridentSpout和TridentState几种组合
 
 ### Transactional exactly once
 
+对应的Spout产生的每个batch都会有唯一的txid，其特性：
+
+- 每个batch的txid永远不会改变。对于某个特定的txid，batch在执行重新处理操作时所处理的tuple集和它的第一次处理操作完全相同
+- 不同batch中的tuple不会出现重复的情况（某个 tuple 只会出现在一个 batch 中，而不会同时出现在多个 batch 中）
+- 每个tuple都会放入一个batch中（不会遗漏任何的tuple）
+
+
+
+**State持久化实现原理**
+
 - 存储value，txid
 - txid不同时更新value
 - txid相同时不更新value
 
 
+![](img/trident_state_transactional.png)
+
+
 
 ### Opaque Transactional exactly once
+
+对应的Spout并不能保证一个txid对应的batch中包含的tuple完全一致，具体特性：
+
+- 每个tuple都会通过某个batch处理完成。不过，在tuple处理失败的时候，tuple有可能继续在另一个batch中完成处理，而不一定是在原先的batch中完成处理
+- 可以保证tuple不会被遗漏，而且也不会被多个batch处理
+
+
+
+**State持久化实现原理**
 
 - 存储current value, previous value, txid
 - txid不同时在current上更新，pre也更新
 - txid相同时在current上更新，pre不更新
+
+
+![](img/trident_state_opaque.png)
+
+
+
+**重点**
+
+> 这种方法之所以可行是因为 Trident 具有强顺序性处理的特性。一旦 Trident 开始处理一个新的 batch 的状态更新操作，它永远不会回到过去的 batch 的处理上。同时，由于模糊事务型 spout 会保证 batch 之间不会存在重复 —— 每个 tuple 只会被某一个 batch 完成处理 —— 所以你可以放心地使用 prevValue 来更新 value。
+
+
+
+### Non-transactional
+
+非事务型 spout 不能为 batch 提供任何的安全性保证。非事务型 spout 有可能提供一种“至多一次”的处理模型，在这种情况下 batch 处理失败后 tuple 并不会重新处理；也有可能提供一种“至少一次”的处理模型，在这种情况下可能会有多个 batch 分别处理某个 tuple。总之，此类 spout 不能提供“恰好一次”的语义。
+
 
 
 
@@ -388,11 +444,17 @@ TridentSpout和TridentState几种组合
 
 
 
+
+
 TridentState
 
 - 基本接口（partitionPersist使用）
 - 高级接口（persistentAggregate使用）
 
+
+
+
+**基本接口**
 
 
 ```java
@@ -411,6 +473,8 @@ public interface StateUpdater<S extends State> extends Operation {
 ```
 
 
+
+**高级接口**
 
 ```java
 public interface MapState<T> extends ReadOnlyMapState<T> {
@@ -450,7 +514,7 @@ public class OpaqueMap<T> implements MapState<T> {}
 1. PartitionedTransactionalSpoutExecutor调用emitPartitionBatchNew emit新tuple batch，返回meta信息，其中包括kafka的起止offset
 2. PartitionedTransactionalSpoutExecutor把meta信息存储到ZK上
 3. PartitionedTransactionalSpoutExecutor在tuple batch fail 时调用emitPartitionBatch做replay，会传入对应的meta信息
-4.  emitPartitionBatch根据meta信息中的起止offset精准回放
+4. emitPartitionBatch根据meta信息中的起止offset精准回放
 
 
 

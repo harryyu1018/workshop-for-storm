@@ -53,6 +53,7 @@ mystream.each(new Fields("b"), new MyFunction(), new Fields("d")))
 [1, 2, 3, 0]
 [1, 2, 3, 1]
 [4, 1, 6, 0]
+.....
 ```
 
 
@@ -81,7 +82,6 @@ mystream.each(new Fields("b", "a"), new MyFilter())
 [1, 2, 3]
 [2, 1, 1]
 [2, 3, 4]
-
 ```
 
 最终转化成这样的结果 tuple：
@@ -89,6 +89,48 @@ mystream.each(new Fields("b", "a"), new MyFilter())
 ```
 [2, 1, 1]
 ```
+
+
+
+### map & flatMap
+
+`map` 返回每个tuple应用映射函数得到的结果组成的流。`map` 可以应用到tuple 一对一转换。
+
+比如，如果有一个单词流，你希望将单词流转化为单词的大写格式，那么你可以定义如下的映射函数：
+
+```java
+public class UpperCase extends MapFunction {
+ @Override
+ public Values execute(TridentTuple input) {
+   return new Values(input.getString(0).toUpperCase());
+ }
+}
+```
+
+这个映射函数可以应用到流上，产生单词大写格式的流
+
+```java
+mystream.map(new UpperCase());
+```
+
+`flatMap` 类似 `map` ，但是可以有一对多转换的作用，然后将其“压扁”生成一个新的流。
+
+比如，你有一个句子流，并且你希望将将其转换成单词流，那么可以如下使用flatMap的函数：
+
+```java
+public class Split extends FlatMapFunction {
+  @Override
+  public Iterable<Values> execute(TridentTuple input) {
+    List<Values> valuesList = new ArrayList<>();
+    for (String word : input.getString(0).split(" ")) {
+      valuesList.add(new Values(word));
+    }
+    return valuesList;
+  }
+}
+```
+
+
 
 
 
@@ -137,7 +179,7 @@ Partition 2:
 **Storm有三个用于定义聚合器的接口：**
 
 - CombinerAggregator
--  ReducerAggregator
+- ReducerAggregator
 - Aggregator
 
 
@@ -288,3 +330,31 @@ mystream.project(new Fields("b", "d"))
 如果你在分组数据流上执行聚合操作，聚合器会在每个分组（而不是整个区块）上运行。persistentAggregate 同样可以在一个分组数据里上运行，这种情况下聚合结果会存储在 [MapState](https://github.com/apache/storm/blob/master/storm-core/src/jvm/storm/trident/state/map/MapState.java) 中，其中的 key 就是分组的域名。
 
 和其他操作一样，对分组数据流的聚合操作也可以以链式的方式执行。
+
+
+
+## 5. 融合与联结
+
+Trident API 的最后一部分是联结不同的数据流的操作。联结数据流最简单的方式就是将所有的数据流融合到一个流中。你可以使用 TridentTopology 的 merge 方法实现该操作，比如这样：
+
+```
+topology.merge(stream1, stream2, stream3);
+```
+
+Trident 会将融合后的新数据流的域命名为为第一个数据流的输出域。
+
+联结数据流的另外一种方法是使用 join。像 SQL 那样的标准 join 操作只能用于有限的输入数据集，对于无限的数据集就没有用武之地了。Trident 中的 join 只会应用于每个从 spout 中输出的小 batch。
+
+下面是两个流的 join 操作的示例，其中一个流含有 [“key”, “val1″, “val2″] 域，另外一个流含有 [“x”, “val1″] 域：
+
+```
+topology.join(stream1, new Fields("key"), stream2, new Fields("x"), new Fields("key", "a", "b", "c"));
+```
+
+上面的例子会使用 “key” 和 “x” 作为 join 的域来联结 stream1 和 stream2。Trident 要求先定义好新流的输出域，因为输入流的域可能会覆盖新流的域名。从 join 中输出的 tuple 中会包含：
+
+1. join 域的列表。在这个例子里，输出的 “key” 域与 stream1 的 “key” 域以及 stream2 的 “x” 域对应。
+2. 来自所有流的非 join 域的列表。这个列表是按照传入 join 方法的流的顺序排列的。在这个例子里，“ a” 和 “b” 域与 stream1 的 “val1” 和 “val2” 域对应；而 “c” 域则与 stream2 的 “val1” 域相对应。
+
+在对不同的 spout 发送出的流进行 join 时，这些 spout 上会按照他们发送 batch 的方式进行同步处理。也就是说，一个处理中的 batch 中含有每个 spout 发送出的 tuple。
+
