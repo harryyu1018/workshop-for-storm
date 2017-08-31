@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <property>
+        <name>hbase.zookeeper.quorum</name>
+        <value>192.168.200.123</value>
+    </property>
+
+    <!-- 此参数决定了每次从服务器scan获取的数据量，默认会是1，性能很低，因此设置为100以上，每行数据太大的，可以小一些，否则可以更高 -->
+    <property>
+        <name>hbase.client.scanner.caching</name>
+        <value>200</value>
+    </property>
+    <property>
+        <name>hbase.rootdir</name>
+        <value>file:///export/yujingyi/data/hbase</value>
+    </property>
+    <property>
+        <name>hbase.zookeeper.property.dataDir</name>
+        <value>/export/yujingyi/data/hbase-zk</value>
+    </property>
+
+</configuration>

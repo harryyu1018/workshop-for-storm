@@ -32,5 +32,13 @@
       <groupId>org.apache.storm</groupId>
       <artifactId>storm-redis</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.apache.storm</groupId>
+      <artifactId>storm-elasticsearch</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.storm</groupId>
+      <artifactId>storm-hbase</artifactId>
+    </dependency>
   </dependencies>
 </project>
