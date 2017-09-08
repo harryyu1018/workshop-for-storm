@@ -81,6 +81,10 @@ public class TridentWordCountAndStoreIntoHBase {
         config.setMaxSpoutPending(5);
 
         Map<String, String> hbaseConfigMap = new HashMap<>();
+        hbaseConfigMap.put("hbase.zookeeper.quorum", "localhost");
+        hbaseConfigMap.put("hbase.rootdir", "file:///Users/harry/app/hbase-1.1.12/data/hbase");
+        hbaseConfigMap.put("hbase.zookeeper.property.dataDir", "/Users/harry/app/hbase-1.1.12/data/hbase-zk");
+
         config.put("config_key", hbaseConfigMap);
 
         args = new String[] { "config_key" };
